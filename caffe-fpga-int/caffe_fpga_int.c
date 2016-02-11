@@ -1,11 +1,16 @@
-# Include <linux/module.h> 
-# Include <linux/init.h> 
-# Include <linux/fs.h> 
-# Include <linux/kdev_t.h> 
-# Include <linux/cdev.h> 
-# Include <linux/kernel.h> 
+#include <linux/module.h> 
+#include <linux/init.h> 
+#include <linux/fs.h>
+#include <linux/sched.h>
+#include <linux/irq.h>
+#include <linux/kdev_t.h> 
+#include <linux/cdev.h> 
+#include <linux/device.h>
+#include <linux/kernel.h> 
 #include <linux/spinlock.h>
-#include <asm/uaccess.h>
+#include <linux/types.h>
+#include <linux/interrupt.h>
+#include <linux/spinlock_types.h>
 
 /* Define IRQ number */
 #define	ACCEL_FPGAHPS_INT_NUM	72
@@ -19,7 +24,7 @@
 #   define DEBUG( flag, fmt, args... )
 #endif
 
-# Define ACCELERATOR_DEVICE_NAME "accelerator-fpga"
+#define ACCELERATOR_DEVICE_NAME "accelerator-fpga"
 
 static int accelerator_fpga_open(struct inode * inodp, struct file * filp);
 static int accelerator_fpga_fasync(int fd, struct file * filp, int mode);
@@ -35,11 +40,15 @@ static struct file_operations accelerator_fpga_fops =
 	fasync:     accelerator_fpga_fasync
 };
 
+static int gDebugTrace = 0;
+static int gDebugError = 1;
+
 static dev_t accelerator_fpga_DevNum = 0;
-static struct cdev accelerator_fpga_Dev;
+static struct cdev *accelerator_fpga_Dev;
 static struct fasync_struct * async = NULL;
 static struct class *accelerator_fpga_Class = NULL;
 
+static DEFINE_SPINLOCK(interrupt_flag_lock);
 
 static int accelerator_fpga_open(struct inode * inodp, struct file * filp)
 { 
@@ -61,7 +70,7 @@ static int accelerator_fpga_release(struct inode *inode, struct file *file)
     DEBUG( Trace, "accelerator_fpga_release called\n" );
 
     // remove this file from fasync notifcation queue
-    gpio_event_fasync(-1, file, 0);
+    accelerator_fpga_fasync(-1, file, 0);
 
     return 0;
 }
@@ -111,24 +120,24 @@ static int __init accelerator_fpga_handler_init(void)
 	
 	// Register our device. The device becomes "active" as soon as cdev_add 
     // is called.
-    cdev_init(&accelerator_fpga_Dev, &accelerator_fpga_fops);
-    accelerator_fpga_Dev.owner = THIS_MODULE;
+    cdev_init(accelerator_fpga_Dev, &accelerator_fpga_fops);
+    accelerator_fpga_Dev->owner = THIS_MODULE;
 	
-	if ( (ret = cdev_add( &gGpioEventCDev, gGpioEventDevNum, 1 )) != 0 )
+	if ( (ret = cdev_add( accelerator_fpga_Dev, accelerator_fpga_DevNum, 1 )) != 0 )
     {
         printk(KERN_WARNING "sample: cdev_add failed: %d\n", ret);
         return ret;
     }
 	
 	// Create a class, so that udev will make the /dev entry
-    accelerator_fpga_Class = class_create( THIS_MODULE, GPIO_EVENT_DEV_NAME );
+    accelerator_fpga_Class = class_create(THIS_MODULE, ACCELERATOR_DEVICE_NAME);
     if ( IS_ERR(accelerator_fpga_Class) )
     {
         printk(KERN_WARNING "sample: Unable to create class\n" );
         return -1;
     }
 
-    class_device_create(accelerator_fpga_Class, NULL, accelerator_fpga_DevNum, NULL, ACCELERATOR_DEVICE_NAME);
+    device_create(accelerator_fpga_Class, NULL, accelerator_fpga_DevNum, NULL, ACCELERATOR_DEVICE_NAME);
 	
 	if ( ( ret = request_irq(ACCEL_FPGAHPS_INT_NUM, accelerator_fpga_handler, 0,
 					  "accelerator_fpga_handler", (void *)(accelerator_fpga_handler)) ) != 0 )
@@ -145,10 +154,10 @@ static void __exit accelerator_fpga_handler_exit(void)
 	DEBUG( Trace, "called\n" );
 	
 	// Deregister our driver
-    class_device_destroy(accelerator_fpga_Class, accelerator_fpga_DevNum);
+    device_destroy(accelerator_fpga_Class, accelerator_fpga_DevNum);
     class_destroy(accelerator_fpga_Class);
 	
-	cdev_del(&accelerator_fpga_Dev);
+	cdev_del(accelerator_fpga_Dev);
 	
 	unregister_chrdev_region(accelerator_fpga_DevNum, 1);
 }

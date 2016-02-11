@@ -4,21 +4,26 @@
 #
 #############################################################################
 
-obj-m := fpga_hps_int.o
+MODULE_NAME := caffe_fpga_int
 
-SRC := $(shell pwd)
+ifneq ($(KERNELRELEASE),)
+# call from kernel build system
 
-all:
-	$(MAKE) -C $(KERNEL_SRC) M=$(SRC)
+obj-m := $(MODULE_NAME).o
 
-modules_install:
-	$(MAKE) -C $(KERNEL_SRC) M=$(SRC) modules_install
+else
+
+PWD := $(shell pwd)
+
+default: kernel-module
+.PHONY: kernel-module
+
+kernel-module:
+	$(MAKE) -C $(KERNEL_DIR) M=$(PWD) modules
 
 clean:
 	rm -f *.o *~ core .depend .*.cmd *.ko *.mod.c
 	rm -f Module.markers Module.symvers modules.order
-	rm -rf .tmp_versions Modules.symvers fpga_hps_int
+	rm -rf .tmp_versions Modules.symvers $(MODULE_NAME)*
 
-ifeq (.depend,$(wildcard .depend))
-include .depend
 endif
